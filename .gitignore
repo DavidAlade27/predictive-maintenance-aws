@@ -1,0 +1,20 @@
+   # Credentials and certificates: never commit these
+   certs/
+   *.pem
+   *.key
+   *.crt
+   *.pem.crt
+   *.pem.key
+
+   # Local credentials or environment files
+   .env
+   *credentials*
+
+   # Dataset files (download from the original source instead)
+   *.npz
+   CWRU_Bearing_NumPy/
+
+   # Python and macOS clutter
+   __pycache__/
+   *.pyc
+   .DS_Store
