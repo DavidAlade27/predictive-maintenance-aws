@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Predictive Maintenance Dashboard</title>
+<style>
+  body {
+    font-family: -apple-system, Arial, sans-serif;
+    background: #f4f6f8;
+    margin: 0;
+    padding: 24px;
+    color: #1a1a1a;
+  }
+  h1 {
+    font-size: 22px;
+    margin-bottom: 4px;
+  }
+  p.subtitle {
+    color: #666;
+    margin-top: 0;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: white;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  .card h2 {
+    font-size: 16px;
+    margin-top: 0;
+  }
+  #chart {
+    width: 100%;
+    height: 260px;
+  }
+  .table-wrap {
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid #eee;
+    vertical-align: top;
+  }
+  th {
+    color: #555;
+    font-weight: 600;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .badge.true {
+    background: #fde2e2;
+    color: #b42318;
+  }
+  .badge.false {
+    background: #e6f4ea;
+    color: #1e7e34;
+  }
+  .fault-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #eef0f3;
+    color: #333;
+  }
+  .fault-badge.Normal {
+    background: #e6f4ea;
+    color: #1e7e34;
+  }
+  .fault-badge.InnerRace, .fault-badge.OuterRace, .fault-badge.Ball {
+    background: #fff3e0;
+    color: #b45309;
+  }
+  #status {
+    color: #888;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+
+  /* ---- Cost of downtime panel ---- */
+  .savings {
+    border-left: 5px solid #1e7e34;
+  }
+  .savings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-bottom: 14px;
+  }
+  .metric-value {
+    font-size: 30px;
+    font-weight: 700;
+    color: #1e7e34;
+    line-height: 1.1;
+  }
+  .metric-value.neutral {
+    color: #1a1a1a;
+  }
+  .metric-label {
+    font-size: 13px;
+    color: #555;
+    margin-top: 4px;
+  }
+  .assumptions {
+    font-size: 13px;
+    color: #666;
+    margin: 0;
+    padding-top: 12px;
+    border-top: 1px solid #eee;
+  }
+  td.same-fault {
+    color: #999;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  td.money {
+    color: #1e7e34;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<h1>Predictive Maintenance Dashboard</h1>
+<p class="subtitle">Live sensor readings, anomaly flags, predicted fault type, AI-generated explanations, and the cost of downtime avoided</p>
+<div id="status">Loading...</div>
+
+<div class="card savings">
+  <h2>Cost of downtime avoided</h2>
+  <div class="savings-grid">
+    <div>
+      <div class="metric-value" id="savings-per-fault">-</div>
+      <div class="metric-label">Estimated savings per fault caught early</div>
+    </div>
+    <div>
+      <div class="metric-value neutral" id="hours-avoided">-</div>
+      <div class="metric-label">Downtime hours avoided per fault</div>
+    </div>
+    <div>
+      <div class="metric-value neutral" id="faults-caught">-</div>
+      <div class="metric-label">Faults caught in recent readings</div>
+    </div>
+    <div>
+      <div class="metric-value" id="total-savings">-</div>
+      <div class="metric-label">Total estimated savings from faults with a savings estimate</div>
+    </div>
+  </div>
+  <p class="assumptions" id="assumptions">
+    Waiting for an anomaly to calculate savings.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Vibration Std over Time</h2>
+  <svg id="chart" viewBox="0 0 800 260" preserveAspectRatio="none"></svg>
+</div>
+
+<div class="card">
+  <h2>Recent Readings</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Label</th>
+          <th>Std</th>
+          <th>Anomaly</th>
+          <th>Predicted Fault</th>
+          <th>Est. Savings</th>
+          <th>Explanation</th>
+          <th>KB Reference</th>
+          <th>Parts Check</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  // ---- CONFIG: paste your API Gateway Invoke URL below ----
+  const API_URL = "https://YOUR_API_ID.execute-api.eu-north-1.amazonaws.com/readings";
+  // -----------------------------------------------------------
+
+  // A new fault "incident" starts after this many seconds with no anomaly
+  const INCIDENT_GAP_SECONDS = 300;
+
+  const money = new Intl.NumberFormat('en-US', {
+    style: 'currency', currency: 'USD', maximumFractionDigits: 0
+  });
+
+  async function loadData() {
+    const statusEl = document.getElementById('status');
+    try {
+      const res = await fetch(API_URL);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+
+      // Sort oldest to newest for the chart and incident counting
+      const sorted = [...data].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      // Newest first for the table
+      const newestFirst = [...sorted].reverse();
+
+      statusEl.textContent = `Loaded ${data.length} readings, last updated ${new Date().toLocaleTimeString()}`;
+      drawChart(sorted);
+      fillSavings(sorted);
+      fillTable(newestFirst);
+    } catch (err) {
+      statusEl.textContent = 'Error loading data: ' + err.message;
+    }
+  }
+
+  // Groups anomalous readings into fault incidents so one fault
+  // (which produces many anomalous readings) is only counted once.
+  function countIncidents(sortedItems) {
+    let incidents = 0;
+    let inIncident = false;
+    let lastAnomalyTime = null;
+
+    sortedItems.forEach(item => {
+      const t = new Date(item.timestamp).getTime();
+      if (item.anomaly) {
+        const gapTooLong = lastAnomalyTime !== null &&
+          (t - lastAnomalyTime) / 1000 > INCIDENT_GAP_SECONDS;
+        if (!inIncident || gapTooLong) {
+          incidents += 1;
+          item._faultStart = true;   // first reading of this fault
+        } else {
+          item._faultStart = false;  // later reading of the same fault
+        }
+        inIncident = true;
+        lastAnomalyTime = t;
+      } else {
+        inIncident = false;
+      }
+    });
+    return incidents;
+  }
+
+  function fillSavings(sortedItems) {
+    // Most recent anomaly that has a savings figure
+    const withSavings = sortedItems.filter(i =>
+      i.anomaly && i.estimated_savings !== undefined && i.estimated_savings !== null);
+
+    const faults = countIncidents(sortedItems);
+    document.getElementById('faults-caught').textContent = faults;
+
+    if (withSavings.length === 0) {
+      document.getElementById('savings-per-fault').textContent = '-';
+      document.getElementById('hours-avoided').textContent = '-';
+      document.getElementById('total-savings').textContent = '-';
+      document.getElementById('assumptions').textContent =
+        'Waiting for an anomaly to calculate savings.';
+      return;
+    }
+
+    const latest = withSavings[withSavings.length - 1];
+    const savings = Number(latest.estimated_savings);
+    const hours = Number(latest.downtime_hours_avoided);
+    const costPerHour = hours > 0 ? savings / hours : 0;
+
+    document.getElementById('savings-per-fault').textContent = money.format(savings);
+    document.getElementById('hours-avoided').textContent = hours + ' h';
+    // Add up savings only for faults that actually have a savings estimate
+    const totalSavings = sortedItems
+      .filter(i => i._faultStart && i.estimated_savings !== undefined && i.estimated_savings !== null)
+      .reduce((sum, i) => sum + Number(i.estimated_savings), 0);
+    document.getElementById('total-savings').textContent = money.format(totalSavings);
+    document.getElementById('assumptions').textContent =
+      `Based on ${money.format(costPerHour)} per hour of downtime and ${hours} hours saved by ` +
+      `switching from an unplanned breakdown to a planned repair. These are illustrative ` +
+      `assumptions set in the machine configuration table. Each fault is counted once, ` +
+      `however many anomalous readings it produces.`;
+  }
+
+  function drawChart(items) {
+    const svg = document.getElementById('chart');
+    svg.innerHTML = '';
+    if (items.length === 0) return;
+
+    const stds = items.map(i => i.std);
+    const max = Math.max(...stds, 0.01);
+    const min = 0;
+    const w = 800, h = 260, pad = 30;
+
+    // threshold line at 0.15
+    const thresholdY = h - pad - ((0.15 - min) / (max - min)) * (h - 2 * pad);
+    const thresholdLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    thresholdLine.setAttribute('x1', pad);
+    thresholdLine.setAttribute('x2', w - pad);
+    thresholdLine.setAttribute('y1', thresholdY);
+    thresholdLine.setAttribute('y2', thresholdY);
+    thresholdLine.setAttribute('stroke', '#b42318');
+    thresholdLine.setAttribute('stroke-dasharray', '4,4');
+    svg.appendChild(thresholdLine);
+
+    const points = items.map((item, idx) => {
+      const x = pad + (idx / (items.length - 1 || 1)) * (w - 2 * pad);
+      const y = h - pad - ((item.std - min) / (max - min)) * (h - 2 * pad);
+      return `${x},${y}`;
+    }).join(' ');
+
+    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    polyline.setAttribute('points', points);
+    polyline.setAttribute('fill', 'none');
+    polyline.setAttribute('stroke', '#2563eb');
+    polyline.setAttribute('stroke-width', '2');
+    svg.appendChild(polyline);
+  }
+
+  function fillTable(items) {
+    const tbody = document.getElementById('table-body');
+    tbody.innerHTML = '';
+    items.slice(0, 20).forEach(item => {
+      const tr = document.createElement('tr');
+      const anomalyClass = item.anomaly ? 'true' : 'false';
+      const fault = item.predicted_fault || '-';
+      const hasSavings = item.anomaly && item.estimated_savings !== undefined && item.estimated_savings !== null;
+      let savingsCell = '-';
+      let savingsClass = '';
+      if (hasSavings && item._faultStart) {
+        savingsCell = money.format(Number(item.estimated_savings));
+        savingsClass = 'money';
+      } else if (hasSavings) {
+        savingsCell = 'Same fault';
+        savingsClass = 'same-fault';
+      }
+      tr.innerHTML = `
+        <td>${item.timestamp}</td>
+        <td>${item.label}</td>
+        <td>${Number(item.std).toFixed(4)}</td>
+        <td><span class="badge ${anomalyClass}">${item.anomaly}</span></td>
+        <td><span class="fault-badge ${fault}">${fault}</span></td>
+        <td class="${savingsClass}">${savingsCell}</td>
+        <td>${item.explanation ? item.explanation.replace(/\n/g, '<br>') : '-'}</td>
+        <td>${item.kb_reference ? item.kb_reference : '-'}</td>
+        <td>${item.parts_checked ? item.parts_checked : '-'}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  loadData();
+  setInterval(loadData, 15000); // refresh every 15 seconds
+</script>
+
+</body>
+</html>
