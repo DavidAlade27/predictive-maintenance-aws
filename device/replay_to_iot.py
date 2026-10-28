@@ -26,7 +26,9 @@ KEY_PATH = "certs/YOUR_CERT_ID-private.pem.key"
 ROOT_CA_PATH = "certs/AmazonRootCA1.pem"
 CLIENT_ID = "pdm_sensor_device"          # must match your Thing name
 TOPIC = "pdm/telemetry"
-DATA_FILE = "CWRU_Bearing_NumPy/Data/1797 RPM/1797_IR_7_DE12.npz"  # swap to a fault file to simulate a failing bearing
+import os, glob
+_chosen = os.environ.get("DATA_FILE")
+DATA_FILE = glob.glob(f"CWRU_Bearing_NumPy/Data/*/{_chosen}")[0] if _chosen else "CWRU_Bearing_NumPy/Data/1797 RPM/1797_IR_7_DE12.npz"  # swap to a fault file to simulate a failing bearing
 LABEL = "healthy" if "Normal" in DATA_FILE else "faulty"
 SAMPLE_RATE_HZ = 12000
 SPEED_MULTIPLIER = 1.0   # 1.0 = real time (1 msg/sec). Raise it to replay faster while testing.
@@ -68,7 +70,7 @@ def main():
     n_windows = len(signal) // SAMPLE_RATE_HZ
     print(f"Publishing {n_windows} windows from {DATA_FILE} to topic '{TOPIC}'\n")
 
-    for i in range(n_windows):
+    for i in [w for _ in range(int(os.environ.get("REPEATS", "1"))) for w in range(n_windows)]:
         window = signal[i * SAMPLE_RATE_HZ: (i + 1) * SAMPLE_RATE_HZ]
         message = {
             "device_id": CLIENT_ID,

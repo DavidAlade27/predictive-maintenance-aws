@@ -50,6 +50,24 @@ Sensor (simulated) → IoT Core → Lambda (store + ML classify) → DynamoDB
 
 Savings figures use illustrative assumptions: $10,000 per hour of downtime, 8 hours unplanned vs 2 hours planned repair.
 
+## Screenshots
+
+**Live dashboard** with the cost-of-downtime panel, vibration chart, and AI explanation:
+
+![Dashboard](docs/dashboard.png)
+
+**One anomaly record** in DynamoDB, holding the ML fault type, AI explanation, knowledge-base reference, parts check, and savings:
+
+![Anomaly record](docs/anomaly-record.png)
+
+**Event-driven trigger:** the explanation Lambda runs only when DynamoDB Streams delivers new readings:
+
+![Lambda trigger](docs/lambda-explain-diagram.png)
+
+**CloudWatch logs:** about 10.6 s for an anomaly (Bedrock reasoning) vs about 2 ms for a record that needs no work:
+
+![CloudWatch log](docs/cloudwatch-log.png)
+
 ## Repository structure
 
 ```
@@ -67,6 +85,12 @@ docs/              screenshots
 
 IoT Core · Lambda · DynamoDB · DynamoDB Streams · Amazon Bedrock (Claude Haiku 4.5, Titan Embeddings) · Amazon SNS · API Gateway · S3 · IAM (least-privilege inline policies)
 
+## Cost
+
+Building and testing the whole system over two months cost **US$0.84 before credits**, across 14 AWS services. About 92% of that (US$0.77) was the Claude model on Bedrock, which is why only anomalous readings are sent to the AI step.
+
+![Cost by service](docs/cost-by-service.png)
+
 ## Running it yourself
 
 This repository contains **no credentials**. Values specific to my AWS account have been replaced with placeholders:
@@ -78,7 +102,17 @@ This repository contains **no credentials**. Values specific to my AWS account h
 | `YOUR_CERT_ID` | your IoT device certificate ID |
 | `YOUR_API_ID` | your API Gateway ID |
 
-Place your own IoT device certificate, private key, and Amazon Root CA in a local `certs/` folder (ignored by Git). The dataset comes from [srigas/CWRU_Bearing_NumPy](https://github.com/srigas/CWRU_Bearing_NumPy), a NumPy conversion of the Case Western Reserve University bearing dataset.
+Place your own IoT device certificate, private key, and Amazon Root CA in a local `certs/` folder (ignored by Git).
+
+Run the replay from the project folder, choosing the data file and how many times to repeat it:
+
+```bash
+# Healthy bearing, 60 readings (resets the dashboard to normal)
+DATA_FILE=1797_Normal.npz REPEATS=6 python3 device/replay_to_iot.py
+
+# Inner race fault, 10 readings (triggers detection, AI explanation, and one alert)
+DATA_FILE=1797_IR_7_DE12.npz python3 device/replay_to_iot.py
+``` The dataset comes from [srigas/CWRU_Bearing_NumPy](https://github.com/srigas/CWRU_Bearing_NumPy), a NumPy conversion of the Case Western Reserve University bearing dataset.
 
 A full step-by-step build guide covering all eight stages, including the pitfalls hit along the way, is available on request.
 
